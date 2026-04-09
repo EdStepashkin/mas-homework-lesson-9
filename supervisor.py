@@ -79,7 +79,7 @@ def save_report(filename: str, content: str) -> str:
     try:
         async def call_mcp():
             async with FastClient("http://127.0.0.1:8902/sse") as client:
-                res = await client.call_tool("do_save_report", {"filename": filename, "content": content})
+                res = await client.call_tool("save_report", {"filename": filename, "content": content})
                 if hasattr(res, "content") and isinstance(res.content, list):
                     return " ".join([c.text for c in res.content if hasattr(c, "text")])
                 return str(res)
