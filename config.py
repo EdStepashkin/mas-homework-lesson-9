@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     api_key: SecretStr = Field(alias="GEMINI_API_KEY")
 
     # Задаємо дефолтну модель, щоб не тягнути її з .env
-    model_name: str = "gemini-2.5-flash"
+    model_name: str = "gemini-3-flash-preview"
 
     max_search_results: int = 5
     max_url_content_length: int = 5000

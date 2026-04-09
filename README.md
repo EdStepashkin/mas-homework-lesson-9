@@ -1,68 +1,65 @@
-# Мультиагентна дослідницька система 🤖🔬
+# Мультиагентна дослідницька система з MCP/ACP архітектурою 🤖🔬
 
-Мультиагентна AI-система, побудована на базі **LangChain** та **LangGraph**, яка координує трьох спеціалізованих суб-агентів за патерном **Plan → Research → Critique**.
+Мультиагентна AI-система, побудована на базі **LangChain**, яка координує трьох спеціалізованих суб-агентів за патерном **Plan → Research → Critique**.
 
-Supervisor оркеструє ітеративний цикл дослідження: Planner декомпозує запит, Researcher виконує глибокий аналіз, а Critic верифікує результати і може повернути на доопрацювання. Збереження звіту захищене через **Human-in-the-Loop (HITL)** — користувач затверджує, редагує або відхиляє фінальний документ.
+У цьому оновленні здійснено **міграцію на розподілену архітектуру** з використанням протоколів **MCP** (Model Context Protocol) для керування інструментами та **ACP** (Agent Context Protocol) для агент-до-агент комунікації. Supervisor тепер діє як оркестратор, що делегує завдання віддаленим ACP-агентам, а самі інструменти винесені в окремі MCP-сервери. Збереження звіту захищене через **Human-in-the-Loop (HITL)** — користувач затверджує, редагує або відхиляє фінальний документ.
 
-> Розширення Research Agent із homework-lesson-5 до мультиагентної архітектури (homework-lesson-8).
+> Розширення мультиагентної архітектури (homework-lesson-8) до розподіленої MCP/ACP архітектури (homework-lesson-9).
 
 ---
 
-## 🏗 Архітектура
+## 🏗 Архітектура (MCP/ACP)
 
 ```
 User (REPL)
   │
   ▼
-Supervisor Agent
+Supervisor Agent (Local Orchestrator)
   │
-  ├── 1. plan(request)       → Planner Agent      → structured ResearchPlan
+  ├── 1. plan(request)       → ACP Client → Planner Agent (ACP Server 8903) 
   │
-  ├── 2. research(plan)      → Research Agent      → findings (web + knowledge base)
+  ├── 2. research(plan)      → ACP Client → Research Agent (ACP Server 8903) 
+  │                                           ↓ (fastmcp tools)
+  ├── 3. critique(findings)  → ACP Client → Critic Agent (ACP Server 8903)
+  │                                           ↓ (fastmcp tools)
+  │                                     SearchMCP (8901): web search, knowledge base
   │
-  ├── 3. critique(findings)  → Critic Agent        → structured CritiqueResult
-  │       │
-  │       ├── verdict: "APPROVE"  → step 4
-  │       └── verdict: "REVISE"   → back to step 2 with feedback (max 2 rounds)
-  │
-  └── 4. save_report(...)    → HITL gated          → approve / edit / reject
+  └── 4. save_report(...)    → HITL gated → ReportMCP (8902): save_report
 ```
 
-### Суб-агенти
+### Сервери (Нова інфраструктура)
 
-| Агент | Роль | Інструменти | Structured Output |
+| Компонент | Роль | Порт | Інструменти |
 |-------|------|-------------|-------------------|
-| **Planner** | Декомпозиція запиту у план дослідження | `web_search`, `knowledge_search` | `ResearchPlan` |
-| **Researcher** | Глибоке дослідження за планом | `web_search`, `read_url`, `knowledge_search` | — |
-| **Critic** | Верифікація якості (freshness, completeness, structure) | `web_search`, `read_url`, `knowledge_search` | `CritiqueResult` |
-| **Supervisor** | Оркестрація циклу Plan→Research→Critique→Save | `plan`, `research`, `critique`, `save_report` | — |
+| **Search MCP** | Надає інформаційні інструменти | 8901 | `web_search`, `read_url`, `knowledge_search` |
+| **Report MCP** | Відповідає за збереження даних | 8902 | `save_report` |
+| **ACP Server** | Хостить агентів як незалежні сервіси | 8903 | — |
+| **Supervisor** | Клієнтська програма-оркестратор | — | Виклик ACP та ReportMCP інструментів |
 
 ---
 
 ## 🌟 Ключові можливості
 
-- **Мультиагентна оркестрація**: Supervisor координує 3 спеціалізованих агенти через `create_agent` з `langchain.agents`
-- **Structured Output**: Planner і Critic повертають валідовані Pydantic-моделі (`ResearchPlan`, `CritiqueResult`) через `response_format`
-- **Ітеративне дослідження**: Critic може повернути Researcher на доопрацювання з конкретним зворотним зв'язком (evaluator-optimizer патерн)
-- **HITL (Human-in-the-Loop)**: `HumanInTheLoopMiddleware` перехоплює `save_report` — користувач затверджує, редагує або відхиляє звіт
-- **RAG з гібридним пошуком**: FAISS (семантичний) + BM25 (лексичний) + CrossEncoder реранкінг
-- **Стрімування**: Реальний час виводу через `stream_mode=["updates", "messages"]` з `version="v2"`
+- **Розподілена архітектура**: Інструменти (MCP) та агенти (ACP) працюють як ізольовані мікросервіси.
+- **Динамічна міграція інструментів**: Утиліта `mcp_tools_to_langchain` на льоту підключається до FastMCP та пакує ресурси у LangChain `@tool`.
+- **Structured Output**: Агенти повертають `Message` (ACP SDK), а всередині використовують Pydantic для структурування кроків.
+- **Eval-Optimizer Pipeline**: Ітеративний цикл дослідження та критики.
+- **Безпечний HITL**: `HumanInTheLoopMiddleware` перехоплює виклик віддаленого `save_report`, дозволяючи користувачу внести зміни до Markdown-звіту у терміналі перед його відправкою на ReportMCP.
+- **RAG з гібридним пошуком**: FAISS (семантичний) + BM25 (лексичний) + CrossEncoder реранкінг (інтегровано у SearchMCP).
 
 ---
 
 ## 🛠 Технологічний стек
 
-- **LLM**: Google Gemini (`gemini-2.5-flash`) через `ChatGoogleGenerativeAI`
-- **Агентний фреймворк**: `langchain.agents.create_agent` + `langchain.agents.middleware.HumanInTheLoopMiddleware`
-- **Персистентність**: `langgraph.checkpoint.memory.InMemorySaver`
-- **RAG-пайплайн**: `FAISS`, `OpenAIEmbeddings` (`text-embedding-3-small`), `BM25Retriever`, `HuggingFaceCrossEncoder` (`BAAI/bge-reranker-base`), `EnsembleRetriever`
-- **Structured Output**: Pydantic `BaseModel` через `response_format` параметр `create_agent`
-- **Інструменти**:
+- **MCP/ACP**: `fastmcp` (3.2.2+), `acp-sdk` (1.0.3+), `uvicorn`
+- **LLM**: Google Gemini (`gemini-2.5-flash`)
+- **Агентний фреймворк**: `langchain.agents`
+- **Інструменти (SearchMCP)**:
   - `knowledge_search` — пошук у локальній базі знань (RAG)
   - `web_search` — пошук в інтернеті (DuckDuckGo)
   - `read_url` — витягування тексту веб-сторінки (trafilatura)
-  - `save_report` — збереження звіту (HITL-захищений)
-- **Конфігурація**: Pydantic `BaseSettings` + `.env`
+- **Інструменти (ReportMCP)**:
+  - `save_report` — збереження звіту 
 
 ---
 
@@ -77,8 +74,10 @@ cd homework-lesson-9
 ### 2. Створення віртуального середовища
 ```bash
 python -m venv venv
-source venv/bin/activate 
+```
 
+```bash
+source venv/bin/activate 
 ```
 
 ### 3. Встановлення залежностей
@@ -92,7 +91,6 @@ pip install -r requirements.txt
 GEMINI_API_KEY="AIzaSyYourApiKeyHere..."
 OPENAI_API_KEY="sk-proj-YourOpenAiKey..."
 ```
-*(`.env` додано до `.gitignore`).*
 
 ### 5. Індексація документів (Ingestion)
 Помістіть PDF-документи у папку `data/` і запустіть:
@@ -101,52 +99,28 @@ python ingest.py
 ```
 Скрипт поріже документи на чанки, згенерує вектори через `OpenAIEmbeddings` і збереже індекси FAISS та BM25 у папку `index/`.
 
-### 6. Запуск системи
+### 6. Інструкція із запуску серверів
+Оскільки архітектура стала розподіленою, необхідно запустити 3 сервери як фонові процеси (або у 3-х окремих терміналах):
+
+**Термінал 1 (Search MCP):**
+```bash
+python mcp_servers/search_mcp.py
+```
+
+**Термінал 2 (Report MCP):**
+```bash
+python mcp_servers/report_mcp.py
+```
+
+**Термінал 3 (ACP Server):**
+```bash
+python acp_server.py
+```
+
+### 7. Запуск Supervisor-оркестратора
+Коли всі 3 сервери запущено (порти 8901, 8902, 8903), в **окремому 4-му терміналі** запустіть головну програму REPL системи:
 ```bash
 python main.py
-```
-
----
-
-## 💬 Приклад роботи
-
-```
-🔬 Multi-Agent Research System (type 'exit' to quit)
-   Supervisor → Planner → Researcher → Critic → HITL
-------------------------------------------------------------
-
-You: Compare RAG approaches: naive, sentence-window, and parent-child. Write a report.
-
-🔧 plan("Compare RAG approaches: naive, sentence-window, parent-child")
-  📎 plan → ResearchPlan(goal="Compare three RAG retrieval strategies", ...)
-
-🔧 research("Research these topics: 1) naive RAG approach 2) sentence-window ...")
-  📎 research → [detailed findings with sources]
-
-🔧 critique("Findings: ... [research results] ...")
-  📎 critique → CritiqueResult(verdict="REVISE", gaps=["Outdated benchmarks", ...])
-
-🔧 research("Find: 1) 2025-2026 benchmarks 2) parent-child details")
-  📎 research → [updated findings]
-
-🔧 critique("Updated findings: ...")
-  📎 critique → CritiqueResult(verdict="APPROVE", strengths=["Up-to-date", ...])
-
-🔧 save_report({"filename": "rag_comparison.md", "content": "# Comparison of RAG..."})
-
-============================================================
-⏸️  ACTION REQUIRES APPROVAL
-============================================================
-  Tool:  save_report
-  File:  rag_comparison.md
-  Content preview:
-# Comparison of RAG Approaches...
-
-👉 approve / edit / reject: approve
-
-✅ Approved!
-
-🤖 Supervisor: Звіт збережено у output/rag_comparison.md
 ```
 
 ---
@@ -154,38 +128,37 @@ You: Compare RAG approaches: naive, sentence-window, and parent-child. Write a r
 ## 📁 Структура проєкту
 
 ```
-homework-lesson-8/
-├── main.py              # REPL з HITL interrupt/resume loop
-├── supervisor.py        # Supervisor Agent + HITL middleware
-├── agents/
-│   ├── __init__.py
-│   ├── planner.py       # Planner Agent (response_format=ResearchPlan)
-│   ├── research.py      # Research Agent (перевикористання hw5 tools)
-│   └── critic.py        # Critic Agent (response_format=CritiqueResult)
-├── schemas.py           # Pydantic-моделі: ResearchPlan, CritiqueResult
-├── tools.py             # web_search, read_url, knowledge_search, save_report
-├── retriever.py         # Hybrid search: FAISS + BM25 + CrossEncoder reranking
-├── ingest.py            # Ingestion pipeline: PDF → chunks → FAISS index
-├── config.py            # System prompts (4 агенти) + Settings
-├── requirements.txt     # Залежності
-├── data/                # Вхідні PDF-документи для RAG
-├── index/               # Згенеровані індекси (не в Git)
-├── output/              # Згенеровані звіти
-└── .env                 # API-ключі (не в Git)
+homework-lesson-9/
+├── main.py              # Головна програма користувача (REPL)
+├── supervisor.py        # Supervisor Agent + HITL, що викликає віддалені ACP
+├── mcp_servers/         # MCP-Сервери
+│   ├── search_mcp.py    # Сервер із web_search та RAG
+│   └── report_mcp.py    # Сервер із інструментами логування і виводу
+├── acp_server.py        # Основний сервер із агентами planner, researcher, critic
+├── mcp_utils.py         # Утиліти конвертації MCP-langchain tools
+├── agents/              # Шаблони агентів
+│   ├── planner.py       
+│   ├── research.py      
+│   └── critic.py        
+├── schemas.py           # Pydantic-моделі
+├── tools.py             # Внутрішня реалізація інструментів (виклик з MCP)
+├── retriever.py         # Hybrid search: FAISS + BM25 + CrossEncoder 
+├── ingest.py            # Ingestion pipeline: PDF → FAISS index
+├── config.py            # System prompts та Settings
+├── tests_experiments/   # Папка з перевірочними/додатковими скриптами
+└── data/, index/        # Згенеровані дані RAG 
 ```
 
 ---
 
-## 🔄 Що змінилося порівняно з homework-5
+## 🔄 Що змінилося порівняно з homework-8
 
-| Було (hw5) | Стало (hw8) |
+| Було (hw8) | Стало (hw9) |
 |------------|-------------|
-| Один Research Agent з 6 інструментами | Supervisor + 3 суб-агенти |
-| `create_react_agent` (LangGraph prebuilt) | `create_agent` з `langchain.agents` |
-| Агент робить усе одразу | Plan → Research → Critique цикл |
-| Одноразове дослідження | Ітеративне: Critic може повернути на доопрацювання |
-| Без потоку затвердження | HITL: save_report потребує approve/edit/reject |
-| Лише вільний текст | Structured output через Pydantic (ResearchPlan, CritiqueResult) |
+| Всі інструменти імпортовані локально | Інструменти віддалені (`SearchMCP`, `ReportMCP`) |
+| Всі агенти (`planner`, `researcher`, `critic`) локальні | Агенти виділені у незалежний віддалений сервіс `acp_server.py` |
+| `Supervisor` створює агентів через LangGraph або LangChain напряму | `Supervisor` делегує задачі через протокол `ACP SDK` (по 8903 порту) |
+| Інструменти працювали як синхронні | Повністю асинхронні `mcp_utils`, адаптовані під `fastmcp` клієнти |
 
 ---
 
