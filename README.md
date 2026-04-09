@@ -70,8 +70,8 @@ Supervisor Agent
 
 ### 1. Клонування репозиторію
 ```bash
-git clone https://github.com/EdStepashkin/mas-homework-lesson-8.git
-cd homework-lesson-8
+git clone https://github.com/EdStepashkin/mas-homework-lesson-9.git
+cd homework-lesson-9
 ```
 
 ### 2. Створення віртуального середовища
